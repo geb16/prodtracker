@@ -1,16 +1,15 @@
 # dashboard/flash_warning.py
 
-import tkinter as tk
+import queue
 import threading
 import time
+import tkinter as tk
 from pathlib import Path
-import queue
 
-import pyttsx3
-from playsound import playsound
 import pystray
+import pyttsx3
 from PIL import Image, ImageDraw
-
+from playsound import playsound
 
 # ----------------------------
 # CONFIG
@@ -36,6 +35,7 @@ _tray_started = False
 # SOUND (THREAD-SAFE)
 # ----------------------------
 
+
 def _play_sound(escalate: bool):
     try:
         sound = ESCALATION_FILE if escalate and ESCALATION_FILE.exists() else BEEP_FILE
@@ -48,6 +48,7 @@ def _play_sound(escalate: bool):
 # ----------------------------
 # TTS (NEW ENGINE PER CALL)
 # ----------------------------
+
 
 def _speak(text: str):
     try:
@@ -63,6 +64,7 @@ def _speak(text: str):
 # ----------------------------
 # SYSTEM TRAY (SAFE)
 # ----------------------------
+
 
 def _start_tray():
     global _tray_started
@@ -96,6 +98,7 @@ threading.Thread(target=_start_tray, daemon=True).start()
 # ----------------------------
 # ✅ SINGLE TK THREAD (CRITICAL)
 # ----------------------------
+
 
 def _tk_mainloop():
     root = tk.Tk()
@@ -177,6 +180,7 @@ threading.Thread(target=_tk_mainloop, daemon=True).start()
 # ----------------------------
 # ✅ PUBLIC API (SAFE)
 # ----------------------------
+
 
 def flash_warning(title: str, app: str, duration: int = 10):
     """

@@ -1,7 +1,7 @@
 # src/prodtracker/blocker/config.py
 
-from pathlib import Path
 import platform
+from pathlib import Path
 
 SYSTEM = platform.system()
 HOSTS_PATH = Path("/etc/hosts") if SYSTEM != "Windows" else Path(r"C:\Windows\System32\drivers\etc\hosts")

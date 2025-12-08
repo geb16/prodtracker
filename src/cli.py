@@ -1,8 +1,9 @@
 # pathfile src/cli.py
 import typer
+import uvicorn
+
 from prodtracker import agent
 from prodtracker.api.server import app
-import uvicorn
 
 # Explain typer CLI
 # Typer is a library for building command-line interface (CLI) applications
@@ -13,13 +14,16 @@ import uvicorn
 
 cli = typer.Typer()
 
+
 @cli.command()
 def start_agent():
     agent.run()
 
+
 @cli.command()
 def start_api():
     uvicorn.run(app, host="127.0.0.1", port=8000, reload=False)
+
 
 if __name__ == "__main__":
     cli()

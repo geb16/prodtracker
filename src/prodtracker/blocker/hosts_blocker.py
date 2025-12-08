@@ -1,10 +1,12 @@
 # src/prodtracker/blocker/hosts_blocker.py
-from .config import HOSTS_PATH, BLOCK_LIST, BLOCK_MARK
+from .config import BLOCK_LIST, BLOCK_MARK, HOSTS_PATH
+
 
 def block_domains(domains=BLOCK_LIST):
     with open(HOSTS_PATH, "a") as f:
         for d in domains:
             f.write(f"127.0.0.1 {d} {BLOCK_MARK}\n")
+
 
 def unblock_all():
     lines = []

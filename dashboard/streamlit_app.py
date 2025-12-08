@@ -1,25 +1,22 @@
 # dashboard/streamlit_app.py
 # What is the port for streamlit app: 8501
 
-import base64
 from pathlib import Path
 
 import pandas as pd
 import plotly.express as px
 import streamlit as st
-from PIL import Image
-from streamlit_autorefresh import st_autorefresh
-from streamlit_extras.metric_cards import style_metric_cards
-
 from api_client import (
-    get_pc_metrics,
     get_pc_events,
+    get_pc_metrics,
     get_phone_summary,
     trigger_phone_block,
 )
 from flash_warning import flash_warning
+from PIL import Image
+from streamlit_autorefresh import st_autorefresh
+from streamlit_extras.metric_cards import style_metric_cards
 from visual_summary import render_performance_corner
-
 
 # -------------------------------
 # CONFIG
@@ -44,7 +41,7 @@ st.sidebar.header("⚙️ Controls")
 
 refresh = st.sidebar.slider("Auto-refresh (seconds)", 1, 60, 10)
 st_autorefresh(interval=refresh * 1000, limit=None, key="live_refresh")
-st.cache_data.clear()   # ✅ ensure true real-time updates
+st.cache_data.clear()  # ✅ ensure true real-time updates
 
 st.sidebar.divider()
 st.sidebar.subheader("📱 Phone Controls")
@@ -130,19 +127,15 @@ if series:
     df_phone["minute"] = df_phone["timestamp"].dt.floor("min")
 
     df_phone["activity"] = df_phone.apply(
-        lambda r: "Distract"
-        if r.get("foreground_app") and any(
-            k in r["foreground_app"] for k in ["youtube", "tiktok", "reddit"]
-        )
-        else ("On" if r["screen_on"] else "Off"),
+        lambda r: (
+            "Distract"
+            if r.get("foreground_app") and any(k in r["foreground_app"] for k in ["youtube", "tiktok", "reddit"])
+            else ("On" if r["screen_on"] else "Off")
+        ),
         axis=1,
     )
 
-    heat = (
-        df_phone.groupby(["minute", "activity"])
-        .size()
-        .reset_index(name="count")
-    )
+    heat = df_phone.groupby(["minute", "activity"]).size().reset_index(name="count")
 
     fig_heat = px.density_heatmap(
         heat,
@@ -154,11 +147,10 @@ if series:
         title="Phone Activity (Redis)",
     )
 
-    st.plotly_chart(fig_heat, width='stretch')
+    st.plotly_chart(fig_heat, width="stretch")
 
 else:
     st.info("No recent phone heartbeats.")
-
 
 
 # -------------------------------

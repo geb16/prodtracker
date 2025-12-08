@@ -1,6 +1,7 @@
 # src/prodtracker/monitor/active_window.py
-import sys, platform
+import platform
 from typing import Tuple
+
 
 def get_active_window() -> Tuple[str, str]:
     """
@@ -35,6 +36,7 @@ def get_active_window() -> Tuple[str, str]:
             else:
                 # Fallback using ctypes when pywin32 is not installed
                 import ctypes
+
                 user32 = ctypes.windll.user32
                 hwnd = user32.GetForegroundWindow()
                 length = user32.GetWindowTextLengthW(hwnd)
@@ -59,6 +61,7 @@ def get_active_window() -> Tuple[str, str]:
     elif system == "Darwin":
         try:
             import importlib
+
             AppKit = importlib.import_module("AppKit")
             NSWorkspace = getattr(AppKit, "NSWorkspace")
             active = NSWorkspace.sharedWorkspace().frontmostApplication()
@@ -70,6 +73,7 @@ def get_active_window() -> Tuple[str, str]:
     else:  # Linux - X11
         try:
             import subprocess
+
             out = subprocess.check_output(["xdotool", "getwindowfocus", "getwindowname"], text=True).strip()
             # app name fallback
             return out, out

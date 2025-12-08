@@ -1,18 +1,18 @@
-from datetime import datetime, timedelta
 import threading
-
-from fastapi import FastAPI, Response
-from fastapi.middleware.cors import CORSMiddleware
-from prometheus_client import generate_latest, CONTENT_TYPE_LATEST, Gauge
-
-from src.prodtracker.db.session import SessionLocal, init_db
-from src.prodtracker.db.models import Event
-from src.prodtracker.blocker.manual_unblock import router as unblock_router
-from src.prodtracker.blocker.backup_helper import backup_hosts, restore_latest_backup
-from src.prodtracker.monitor.noise_detector import background_monitor_and_block
-from src.prodtracker.api.phone import router as phone_router
+from datetime import datetime, timedelta
 
 from dotenv import load_dotenv
+from fastapi import FastAPI, Response
+from fastapi.middleware.cors import CORSMiddleware
+from prometheus_client import CONTENT_TYPE_LATEST, Gauge, generate_latest
+
+from src.prodtracker.api.phone import router as phone_router
+from src.prodtracker.blocker.backup_helper import backup_hosts, restore_latest_backup
+from src.prodtracker.blocker.manual_unblock import router as unblock_router
+from src.prodtracker.db.models import Event
+from src.prodtracker.db.session import SessionLocal, init_db
+from src.prodtracker.monitor.noise_detector import background_monitor_and_block
+
 load_dotenv()
 
 app = FastAPI(title="ProdTracker API", version="1.0")

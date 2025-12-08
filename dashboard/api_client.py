@@ -1,6 +1,7 @@
 # dashboard/api_client.py
 
 import os
+
 import requests
 
 API_BASE = os.getenv("API_BASE", "http://127.0.0.1:8000")
@@ -9,6 +10,7 @@ API_BASE = os.getenv("API_BASE", "http://127.0.0.1:8000")
 # -------------------------------
 # PC (SQL-backed)
 # -------------------------------
+
 
 def get_pc_metrics(last_minutes: int = 60) -> dict:
     r = requests.get(
@@ -33,6 +35,7 @@ def get_pc_events(limit: int = 30) -> list[dict]:
 # -------------------------------
 # Phone (Redis-backed)
 # -------------------------------
+
 
 def get_phone_summary(device_id: str, minutes: int = 60) -> dict:
     r = requests.get(

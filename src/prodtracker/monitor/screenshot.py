@@ -1,15 +1,17 @@
 # screenshot.py
-import pyautogui
 import time
 from pathlib import Path
 
+import pyautogui
+
 SCREEN_DIR = Path("screenshots")
+
 
 def take_screenshot(prefix="ss"):
     """
     Takes a screenshot and saves it in the 'screenshots' directory.
     Automatically creates the directory if it does not exist.
-    
+
     Returns:
         str: Path to the saved screenshot
     """

@@ -3,6 +3,7 @@
 Provides a best-effort local notification mechanism. If desktop notification
 libraries are unavailable, falls back to logging/print to avoid breaking flows.
 """
+
 from __future__ import annotations
 
 import logging

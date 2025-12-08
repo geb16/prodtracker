@@ -15,27 +15,28 @@ import json
 import logging
 import os
 from datetime import datetime, timedelta
-from typing import Annotated, Dict, List, Optional, Iterator
+from typing import Annotated, Dict, Iterator, List, Optional
 
 import jwt
 import redis
+from dotenv import load_dotenv
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
-from pydantic import BaseModel, Field
-from sqlalchemy.orm import Session
 from jwt import InvalidTokenError
 from prometheus_client import Counter
+from pydantic import BaseModel, Field
+from sqlalchemy.orm import Session
 
-from src.prodtracker.db.session import SessionLocal, init_db
-from src.prodtracker.db.models import Event, Device, BlockRecord
-from src.prodtracker.blocker.hosts_blocker import unblock_all, block_domains
+from src.prodtracker.blocker.hosts_blocker import block_domains, unblock_all
+from src.prodtracker.db.models import BlockRecord, Device, Event
+from src.prodtracker.db.session import SessionLocal
 
-from dotenv import load_dotenv
 load_dotenv()
 
 # Optional scheduler (gracefully degraded if missing)
 try:
     from apscheduler.schedulers.background import BackgroundScheduler
 except Exception:  # pragma: no cover - environment fallback
+
     class BackgroundScheduler:  # type: ignore
         def __init__(self, *args, **kwargs):
             pass
@@ -91,11 +92,21 @@ if not PAIRING_JWT_SECRET:
 PAIRING_JWT_ALG = "HS256"
 
 DISTRACTING_KEYWORDS: List[str] = [
-    "youtube", "tiktok", "shorts", "instagram", 
-    "reddit", "facebook", "netflix", "hulu", 
-    "disneyplus", "twitter", "x", "linkedin", 
-    "discord", "instagram"
-    ]
+    "youtube",
+    "tiktok",
+    "shorts",
+    "instagram",
+    "reddit",
+    "facebook",
+    "netflix",
+    "hulu",
+    "disneyplus",
+    "twitter",
+    "x",
+    "linkedin",
+    "discord",
+    "instagram",
+]
 DISTRACTION_THRESHOLD: int = 3
 HEARTBEAT_WINDOW_SECONDS: int = 60 * 5
 
@@ -293,11 +304,7 @@ def heartbeat(
             raise HTTPException(status_code=500, detail="device secret missing")
 
         # 3️⃣ ✅ Canonical payload (MATCHES CLIENT EXACTLY)
-        timestamp_str = (
-            hb.timestamp.isoformat()
-            if hasattr(hb.timestamp, "isoformat")
-            else str(hb.timestamp)
-        )
+        timestamp_str = hb.timestamp.isoformat() if hasattr(hb.timestamp, "isoformat") else str(hb.timestamp)
 
         unsigned_payload = {
             "device_id": hb.device_id,
@@ -306,12 +313,7 @@ def heartbeat(
             "foreground_app": hb.foreground_app,
         }
 
-        payload_bytes = json.dumps(
-            unsigned_payload,
-            separators=(",", ":"),
-            sort_keys=True,
-            default=str
-        ).encode()
+        payload_bytes = json.dumps(unsigned_payload, separators=(",", ":"), sort_keys=True, default=str).encode()
 
         # 4️⃣ ✅ HMAC verification
         if not hb.signature:
@@ -322,6 +324,7 @@ def heartbeat(
 
         # 5️⃣ DB update (safe)
         from datetime import timezone
+
         device.last_seen = datetime.now(timezone.utc)
         db.commit()
 
@@ -349,9 +352,11 @@ def heartbeat(
         print("🔥 HEARTBEAT CRASH:", repr(e))
         raise HTTPException(status_code=500, detail="heartbeat processing failed")
 
+
 # -------------------------------------------------------------------
 # Summary endpoint
 # -------------------------------------------------------------------
+
 
 @router.get("/summary")
 def phone_pc_summary(
@@ -367,21 +372,10 @@ def phone_pc_summary(
 
     phone_total = len(entries)
     phone_screen_on = sum(1 for e in entries if e.get("screen_on"))
-    phone_distract = sum(
-        1 for e in entries
-        if any(
-            kw in (str(e.get("foreground_app")) or "")
-            for kw in DISTRACTING_KEYWORDS
-        )
-    )
+    phone_distract = sum(1 for e in entries if any(kw in (str(e.get("foreground_app")) or "") for kw in DISTRACTING_KEYWORDS))
 
     since = datetime.utcnow() - timedelta(minutes=minutes)
-    pc_events = (
-        db.query(Event)
-        .filter(Event.timestamp >= since)
-        .order_by(Event.timestamp.asc())
-        .all()
-    )
+    pc_events = db.query(Event).filter(Event.timestamp >= since).order_by(Event.timestamp.asc()).all()
     pc_signal = sum(1 for e in pc_events if bool(e.productive))
     pc_noise = sum(1 for e in pc_events if not bool(e.productive))
     pc_total = pc_signal + pc_noise
@@ -416,23 +410,13 @@ def evaluate_device_state(device_id: str) -> None:
     - `BlockRecord` + hosts blocker to enforce policy
     """
     entries = load_recent_heartbeats(device_id)
-    distract_count = sum(
-        1
-        for e in entries
-        if any(kw in (str(e.get("foreground_app")) or "") for kw in DISTRACTING_KEYWORDS)
-    )
+    distract_count = sum(1 for e in entries if any(kw in (str(e.get("foreground_app")) or "") for kw in DISTRACTING_KEYWORDS))
     screen_on_count = sum(1 for e in entries if bool(e.get("screen_on")))
 
     db = SessionLocal()
     try:
         two_min = datetime.utcnow() - timedelta(minutes=2)
-        recent_pc = (
-            db.query(Event)
-            .filter(Event.timestamp >= two_min)
-            .order_by(Event.timestamp.desc())
-            .limit(20)
-            .all()
-        )
+        recent_pc = db.query(Event).filter(Event.timestamp >= two_min).order_by(Event.timestamp.desc()).limit(20).all()
         pc_prod_count = sum(1 for e in recent_pc if getattr(e, "productive", False))
         pc_total = max(1, len(recent_pc))
         pc_is_productive = (pc_prod_count / pc_total) >= 0.7

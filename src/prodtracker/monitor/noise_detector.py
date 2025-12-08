@@ -1,14 +1,16 @@
 # src/prodtracker/monitor/noise_detector.py
 import time
 from datetime import datetime
+
+from src.prodtracker.blocker import hosts_blocker
+from src.prodtracker.db.models import Event
+from src.prodtracker.db.session import SessionLocal
 from src.prodtracker.monitor.active_window import get_active_window
 from src.prodtracker.monitor.screenshot import take_screenshot
-from src.prodtracker.blocker import hosts_blocker
-from src.prodtracker.db.session import SessionLocal
-from src.prodtracker.db.models import Event
 
 # Words that flag likely distractions
 DISTRACTION_KEYWORDS = ["youtube", "shorts", "tiktok", "instagram", "facebook", "reddit", "x.com"]
+
 
 def check_for_noise():
     """
@@ -59,4 +61,3 @@ def background_monitor_and_block(interval: int = 5):
             hosts_blocker.unblock_all()
 
         time.sleep(interval)
-
