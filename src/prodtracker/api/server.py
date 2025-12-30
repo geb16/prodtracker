@@ -1,4 +1,6 @@
+import os
 import threading
+from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 
 from dotenv import load_dotenv
@@ -6,23 +8,40 @@ from fastapi import FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
 from prometheus_client import CONTENT_TYPE_LATEST, Gauge, generate_latest
 
-from src.prodtracker.api.phone import router as phone_router
-from src.prodtracker.blocker.backup_helper import backup_hosts, restore_latest_backup
-from src.prodtracker.blocker.manual_unblock import router as unblock_router
-from src.prodtracker.db.models import Event
-from src.prodtracker.db.session import SessionLocal, init_db
-from src.prodtracker.monitor.noise_detector import background_monitor_and_block
+from prodtracker.api.phone import router as phone_router
+from prodtracker.blocker.backup_helper import backup_hosts, restore_latest_backup
+from prodtracker.blocker.manual_unblock import router as unblock_router
+from prodtracker.db.models import Event
+from prodtracker.db.session import SessionLocal, init_db
+from prodtracker.monitor.noise_detector import background_monitor_and_block
 
 load_dotenv()
 
-app = FastAPI(title="ProdTracker API", version="1.0")
 
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    init_db()
+    backup_hosts()
+    threading.Thread(target=background_monitor_and_block, daemon=True).start()
+    print("✅ ProdTracker background monitor started.")
+
+    try:
+        yield
+    finally:
+        restore_latest_backup()
+        print("♻️ Hosts restored from latest backup on shutdown.")
+
+
+app = FastAPI(title="ProdTracker API", version="1.0", lifespan=lifespan)
+
+PC_IP = os.getenv("PC_IP")
 # CORS: tightened for typical local dashboard use
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "http://localhost:8501",
         "http://127.0.0.1:8501",
+        f"http://{PC_IP}:8501",
     ],
     allow_methods=["*"],
     allow_headers=["*"],
@@ -40,23 +59,6 @@ SNR_GAUGE = Gauge("prodtracker_snr", "Signal-to-noise ratio over recent events")
 def metrics():
     """Prometheus metrics endpoint (scraped by Prometheus; visualized in Grafana)."""
     return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
-
-
-# -------------------------------
-# Lifecycle events
-# -------------------------------
-@app.on_event("startup")
-def startup_event():
-    init_db()
-    backup_hosts()
-    threading.Thread(target=background_monitor_and_block, daemon=True).start()
-    print("✅ ProdTracker background monitor started.")
-
-
-@app.on_event("shutdown")
-def shutdown_event():
-    restore_latest_backup()
-    print("♻️ Hosts restored from latest backup on shutdown.")
 
 
 # -------------------------------
