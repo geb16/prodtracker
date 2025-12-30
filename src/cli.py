@@ -2,7 +2,7 @@
 import typer
 import uvicorn
 
-from prodtracker import agent
+# from prodtracker import agent
 from prodtracker.api.server import app
 
 # Explain typer CLI
@@ -17,7 +17,7 @@ cli = typer.Typer()
 
 @cli.command()
 def start_agent():
-    agent.run()
+    print("Agent functionality is currently disabled.")
 
 
 @cli.command()
@@ -27,3 +27,6 @@ def start_api():
 
 if __name__ == "__main__":
     cli()
+
+# to run the api use the command:
+# python src/cli.py start-api
