@@ -1,15 +1,20 @@
 # dashboard/streamlit_app.py
-# What is the port for streamlit app: 8501
+# port for streamlit app: 8501
 
+import json
+from io import BytesIO
 from pathlib import Path
 
 import pandas as pd
 import plotly.express as px
 import streamlit as st
 from api_client import (
+    API_BASE,
     get_pc_events,
     get_pc_metrics,
     get_phone_summary,
+    pair_phone,
+    send_test_heartbeat,
     trigger_phone_block,
 )
 from flash_warning import flash_warning
@@ -47,6 +52,55 @@ st.sidebar.divider()
 st.sidebar.subheader("📱 Phone Controls")
 device_id = st.sidebar.text_input("Device ID", value="phone-001")
 phone_window = st.sidebar.slider("Phone Window (minutes)", 15, 240, 60)
+
+st.sidebar.divider()
+st.sidebar.subheader("🔐 Pair phone")
+phone_name = st.sidebar.text_input("Phone name", value="Android Phone")
+pair_clicked = st.sidebar.button("Pair / Reset Secret")
+
+if pair_clicked:
+    try:
+        resp = pair_phone(device_id=device_id, name=phone_name)
+        st.session_state.paired_secret = resp.get("secret")
+        st.sidebar.success("Paired. Secret generated.")
+    except Exception as exc:
+        st.sidebar.error(f"Pairing failed: {exc}")
+
+if "paired_secret" in st.session_state and st.session_state.paired_secret:
+    config = {
+        "api_base": API_BASE,
+        "device_id": device_id,
+        "secret": st.session_state.paired_secret,
+    }
+    st.sidebar.caption("Use this config on Android. Treat the secret like a password.")
+    st.sidebar.code(json.dumps(config, indent=2), language="json")
+
+    try:
+        import qrcode
+
+        img = qrcode.make(json.dumps(config))
+        buf = BytesIO()
+        img.save(buf, kind="PNG")
+        st.sidebar.image(buf.getvalue(), caption="Scan to copy config")
+    except Exception:
+        st.sidebar.caption("Tip: install QR support with `pip install qrcode[pil]` in the dashboard env.")
+
+    st.sidebar.divider()
+    st.sidebar.subheader("✅ Test heartbeat")
+    test_screen_on = st.sidebar.checkbox("Screen on", value=True)
+    test_foreground_app = st.sidebar.text_input("Foreground app", value="youtube")
+    send_hb = st.sidebar.button("Send test heartbeat")
+    if send_hb:
+        try:
+            send_test_heartbeat(
+                device_id=device_id,
+                secret=st.session_state.paired_secret,
+                screen_on=test_screen_on,
+                foreground_app=test_foreground_app,
+            )
+            st.sidebar.success("Heartbeat accepted.")
+        except Exception as exc:
+            st.sidebar.error(f"Heartbeat failed: {exc}")
 
 
 # -------------------------------
@@ -124,7 +178,7 @@ if series:
 
     # ✅ Convert Redis epoch -> datetime
     df_phone["timestamp"] = pd.to_datetime(df_phone["ts"], unit="s", utc=True)
-    df_phone["minute"] = df_phone["timestamp"].dt.floor("min")
+    df_phone["minute"] = df_phone["timestamp"].dt.floor("min")  # pyright: ignore[reportAttributeAccessIssue]
 
     df_phone["activity"] = df_phone.apply(
         lambda r: (
