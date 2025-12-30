@@ -20,15 +20,15 @@ from typing import Annotated, Dict, Iterator, List, Optional
 import jwt
 import redis
 from dotenv import load_dotenv
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, status
 from jwt import InvalidTokenError
 from prometheus_client import Counter
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from src.prodtracker.blocker.hosts_blocker import block_domains, unblock_all
-from src.prodtracker.db.models import BlockRecord, Device, Event
-from src.prodtracker.db.session import SessionLocal
+from prodtracker.blocker.hosts_blocker import block_domains, unblock_all
+from prodtracker.db.models import BlockRecord, Device, Event
+from prodtracker.db.session import SessionLocal
 
 load_dotenv()
 
@@ -90,6 +90,10 @@ if not PAIRING_JWT_SECRET:
     raise RuntimeError("PAIRING_JWT_SECRET environment variable must be set for secure pairing JWTs.")
 
 PAIRING_JWT_ALG = "HS256"
+
+# Optional: allow trusted local dashboard to trigger blocks without per-device HMAC.
+# If unset, HMAC signature remains required.
+DASHBOARD_ADMIN_TOKEN = os.getenv("DASHBOARD_ADMIN_TOKEN")
 
 DISTRACTING_KEYWORDS: List[str] = [
     "youtube",
@@ -231,6 +235,11 @@ class PairResponse(BaseModel):
     secret: str
 
 
+class PairAdminRequest(BaseModel):
+    device_id: str = Field(..., min_length=1)
+    name: str = Field(..., min_length=1)
+
+
 class Heartbeat(BaseModel):
     device_id: str
     timestamp: datetime
@@ -239,9 +248,56 @@ class Heartbeat(BaseModel):
     signature: Optional[str] = Field(default=None, description="Hex HMAC of payload")
 
 
+class BlockNowRequest(BaseModel):
+    device_id: str
+    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    domains: Optional[List[str]] = None
+    duration_minutes: Optional[int] = Field(default=None, ge=1)
+    # Backward compatible with older dashboard client payload
+    minutes: Optional[int] = Field(default=None, ge=1)
+    reason: Optional[str] = None
+    signature: Optional[str] = Field(default=None, description="Hex HMAC of payload")
+
+
 # -------------------------------------------------------------------
 # Routes
 # -------------------------------------------------------------------
+@router.post("/pair_admin", response_model=PairResponse, status_code=status.HTTP_200_OK)
+def pair_admin(
+    req: PairAdminRequest,
+    db: Annotated[Session, Depends(get_db)],
+    x_admin_token: Annotated[Optional[str], Header(alias="X-Admin-Token")] = None,
+) -> PairResponse:
+    """Admin-only pairing helper for local dashboard UX.
+
+    Uses DASHBOARD_ADMIN_TOKEN to authorize pairing without requiring a JWT.
+    """
+    if not DASHBOARD_ADMIN_TOKEN:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="DASHBOARD_ADMIN_TOKEN not configured",
+        )
+    if not x_admin_token or not hmac.compare_digest(x_admin_token, DASHBOARD_ADMIN_TOKEN):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="invalid admin token")
+
+    import secrets
+
+    secret = secrets.token_hex(32)
+    device = db.query(Device).filter(Device.device_id == req.device_id).first()
+
+    if device:
+        device.name = req.name
+        device.paired = True
+        device.secret = secret
+    else:
+        device = Device(device_id=req.device_id, name=req.name, paired=True, secret=secret)
+        db.add(device)
+
+    db.commit()
+    logger.info("Admin paired device %s", req.device_id)
+    return PairResponse(status="paired", secret=secret)
+
+
 @router.post("/pair", response_model=PairResponse, status_code=status.HTTP_200_OK)
 def pair(req: PairRequest, db: Annotated[Session, Depends(get_db)]) -> PairResponse:
     """
@@ -353,6 +409,104 @@ def heartbeat(
         raise HTTPException(status_code=500, detail="heartbeat processing failed")
 
 
+@router.post("/block_now", status_code=status.HTTP_200_OK)
+def block_now(
+    req: BlockNowRequest,
+    db: Annotated[Session, Depends(get_db)],
+    x_admin_token: Annotated[Optional[str], Header(alias="X-Admin-Token")] = None,
+):
+    """Manually apply a distraction-domain block for a paired device."""
+    device = db.query(Device).filter(Device.device_id == req.device_id).first()
+    if not device or not getattr(device, "paired", False):
+        raise HTTPException(status_code=403, detail="device not paired")
+
+    if not device.secret:
+        raise HTTPException(status_code=500, detail="device secret missing")
+
+    admin_ok = bool(DASHBOARD_ADMIN_TOKEN and x_admin_token and hmac.compare_digest(x_admin_token, DASHBOARD_ADMIN_TOKEN))
+
+    if not admin_ok and not req.signature:
+        raise HTTPException(status_code=403, detail="missing signature")
+
+    timestamp_str = req.timestamp.isoformat() if hasattr(req.timestamp, "isoformat") else str(req.timestamp)
+    domains = req.domains or BLOCK_DOMAINS_DEFAULT
+
+    # Support both minimal and full-payload signatures for compatibility.
+    unsigned_payload_full = {
+        "device_id": req.device_id,
+        "timestamp": timestamp_str,
+        "domains": domains,
+        "duration_minutes": req.duration_minutes,
+    }
+    unsigned_payload_min = {
+        "device_id": req.device_id,
+        "timestamp": timestamp_str,
+    }
+
+    payload_bytes_full = json.dumps(
+        unsigned_payload_full,
+        separators=(",", ":"),
+        sort_keys=True,
+        default=str,
+    ).encode()
+    payload_bytes_min = json.dumps(
+        unsigned_payload_min,
+        separators=(",", ":"),
+        sort_keys=True,
+        default=str,
+    ).encode()
+
+    if not admin_ok:
+        if not (verify_hmac(device.secret, payload_bytes_full, req.signature) or verify_hmac(device.secret, payload_bytes_min, req.signature)):
+            raise HTTPException(status_code=403, detail="invalid signature")
+
+    duration_minutes = req.duration_minutes or req.minutes
+
+    if duration_minutes:
+        expires_at = datetime.utcnow() + timedelta(minutes=duration_minutes)
+    else:
+        expires_at = datetime.combine(datetime.utcnow().date(), datetime.max.time())
+
+    reason = req.reason or f"manual-block:{req.device_id}"
+    br = BlockRecord(
+        created_at=datetime.utcnow(),
+        expires_at=expires_at,
+        domains=json.dumps(domains),
+        active=True,
+        reason=reason,
+    )
+    db.add(br)
+    db.commit()
+
+    try:
+        BLOCK_APPLIED_TOTAL.inc()
+    except Exception:
+        pass
+
+    try:
+        block_domains(domains)
+    except Exception as exc:  # pragma: no cover
+        logger.error("Manual block apply failed: %s", exc)
+
+    try:
+        sched.add_job(
+            func=scheduled_unblock,
+            trigger="date",
+            run_date=expires_at,
+            args=[getattr(br, "id", 0)],
+            id=f"unblock-{getattr(br, 'id', 0)}",
+        )
+    except Exception as exc:  # pragma: no cover
+        logger.error("Failed to schedule unblock: %s", exc)
+
+    return {
+        "ok": True,
+        "block_record_id": getattr(br, "id", None),
+        "expires_at": expires_at.isoformat(),
+        "domains": domains,
+    }
+
+
 # -------------------------------------------------------------------
 # Summary endpoint
 # -------------------------------------------------------------------
@@ -460,7 +614,7 @@ def evaluate_device_state(device_id: str) -> None:
                 logger.error("Failed to schedule unblock: %s", exc)
 
             try:
-                from src.prodtracker.agent_alerts import alert_user_now
+                from prodtracker.agent_alerts import alert_user_now
 
                 alert_user_now(
                     title="Focus alert",
