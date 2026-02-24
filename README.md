@@ -72,7 +72,7 @@ PAIRING_JWT_SECRET=change-me
 DASHBOARD_ADMIN_TOKEN=change-me
 
 # Used for CORS when the dashboard is accessed from another device
-PC_IP=192.168.0.10
+PC_IP=192.168.x.x
 
 # Optional override for SQLite file location (defaults to ./prodtracker.db)
 PRODTRACKER_DB=prodtracker.db
